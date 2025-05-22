@@ -30,48 +30,57 @@ BASE_DIR = os.getcwd()
 
 # โหลด Data
 @st.cache_data(ttl=300)
-def load_data(lakefs_base_path):
-    import pyarrow.dataset as ds
-    import pandas as pd
-
+def load_data(lakefs_base_path, start_date="2025-05-19", end_date=None):
     all_dfs = []
+    start = pd.to_datetime(start_date)
+    
+    if end_date is None:
+        end = pd.Timestamp.now().normalize()  # วันปัจจุบัน 00:00:00
+    else:
+        end = pd.to_datetime(end_date)
 
-    # loop โหลดทีละชั่วโมงของวันที่ 2025-05-19
-    for hour in range(24):
-        path = os.path.join(
-            lakefs_base_path,
-            "year=2025",
-            "month=5",
-            "day=19",
-            f"hour={hour}"
-        )
-        try:
-            dataset = ds.dataset(
-                path,
-                format="parquet",
-                partitioning="hive",
-                filesystem=fs
+    dates = pd.date_range(start, end)
+
+    for date in dates:
+        year = date.year
+        month = date.month
+        day = date.day
+
+        for hour in range(24):
+            path = os.path.join(
+                lakefs_base_path,
+                f"year={year}",
+                f"month={month}",
+                f"day={day}",
+                f"hour={hour}"
             )
-            table = dataset.to_table()
-            df = table.to_pandas()
-            all_dfs.append(df)
-        except Exception as e:
-            st.warning(f"ไม่พบข้อมูลหรือโหลดไม่ได้: {path} \nError: {e}")
+            try:
+                dataset = ds.dataset(
+                    path,
+                    format="parquet",
+                    partitioning="hive",
+                    filesystem=fs
+                )
+                table = dataset.to_table()
+                df = table.to_pandas()
+                all_dfs.append(df)
+            except Exception as e:
+                pass
 
     if all_dfs:
         df = pd.concat(all_dfs, ignore_index=True)
     else:
-        df = pd.DataFrame()  # กรณีโหลดไม่ได้เลย
+        df = pd.DataFrame()
 
-    # แปลงและกรองข้อมูลต่อ
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df[df["timestamp"] >= pd.Timestamp("2025-05-19")]
+    df = df[(df["timestamp"] >= start) & (df["timestamp"] <= end + pd.Timedelta(days=1))]
 
     df = df[df["district_id"].notnull()]
     df["district_id"] = df["district_id"].astype(str)
     df["pm25"] = pd.to_numeric(df["components_pm2_5"], errors="coerce")
 
     return df
+
 
 
 
