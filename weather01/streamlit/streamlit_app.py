@@ -30,36 +30,49 @@ BASE_DIR = os.getcwd()
 
 # โหลด Data
 @st.cache_data(ttl=300)
-def load_data(lakefs_path):
-    schema = pa.schema([
-        ("timestamp", pa.timestamp("ns")),
-        ("localtime", pa.timestamp("ns")),
-        ("minute", pa.int64()),
-        ("district_id", pa.string()),  # เผื่อไว้
-        ("components_pm2_5", pa.float64())
-    ])
+def load_data(lakefs_base_path):
+    import pyarrow.dataset as ds
+    import pandas as pd
 
-    dataset = ds.dataset(
-        lakefs_path,
-        format="parquet",
-        partitioning="hive",
-        filesystem=fs,
-        schema=schema
-    )
-    table = dataset.to_table()
-    df = table.to_pandas()
+    all_dfs = []
 
-    # ✅ กรองเฉพาะข้อมูลที่มี district_id และอยู่หลังวันที่ 2025-05-18
+    # loop โหลดทีละชั่วโมงของวันที่ 2025-05-19
+    for hour in range(24):
+        path = os.path.join(
+            lakefs_base_path,
+            "year=2025",
+            "month=5",
+            "day=19",
+            f"hour={hour}"
+        )
+        try:
+            dataset = ds.dataset(
+                path,
+                format="parquet",
+                partitioning="hive",
+                filesystem=fs
+            )
+            table = dataset.to_table()
+            df = table.to_pandas()
+            all_dfs.append(df)
+        except Exception as e:
+            st.warning(f"ไม่พบข้อมูลหรือโหลดไม่ได้: {path} \nError: {e}")
+
+    if all_dfs:
+        df = pd.concat(all_dfs, ignore_index=True)
+    else:
+        df = pd.DataFrame()  # กรณีโหลดไม่ได้เลย
+
+    # แปลงและกรองข้อมูลต่อ
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    df = df[df["timestamp"] >= pd.Timestamp("2025-05-18")]
+    df = df[df["timestamp"] >= pd.Timestamp("2025-05-19")]
 
-    # กรองข้อมูลที่มี district_id ไม่เป็น null
     df = df[df["district_id"].notnull()]
     df["district_id"] = df["district_id"].astype(str)
-
     df["pm25"] = pd.to_numeric(df["components_pm2_5"], errors="coerce")
 
     return df
+
 
 
 
